@@ -1,0 +1,53 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: finix-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-finix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-finix}
+    ports:
+      - "5432:5432"
+    volumes:
+      - finix_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-finix} -d ${POSTGRES_DB:-finix}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: finix-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Sobrescreve o host do banco para o nome do serviço dentro da rede do compose.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-finix}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-finix}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    container_name: finix-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      # Volume anônimo para o node_modules não ser sobrescrito pelo bind mount.
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  finix_pgdata:

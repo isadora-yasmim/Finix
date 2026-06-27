@@ -1,0 +1,43 @@
+# ----- Segredos / ambiente -----
+.env
+*.env
+!.env.example
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# ----- Node / Frontend -----
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# ----- Banco / dados -----
+*.sqlite3
+*.db
+
+# ----- IDE / SO -----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ----- Docker -----
+# (volumes nomeados ficam fora da árvore do projeto; nada a ignorar aqui)
+
+# TS build artifacts
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
