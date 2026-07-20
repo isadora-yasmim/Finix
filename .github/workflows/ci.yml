@@ -7,7 +7,7 @@ on:
 
 jobs:
   backend:
-    name: Backend (lint + testes)
+    name: Backend (lint + tipos + testes)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -30,6 +30,9 @@ jobs:
 
       - name: Black (formatação)
         run: black --check .
+
+      - name: Mypy (tipos)
+        run: mypy app
 
       - name: Pytest
         run: pytest
