@@ -26,9 +26,9 @@ _Fundação do projeto_
 
 ### Dia 2 [03/07/2026] (sex)
 _CI + base do backend + Auth (parte 1)_
-- [ ] Pipeline de CI: lint + testes
-- [ ] Cadastro/login com hash de senha — modelo `User`, Argon2/bcrypt, migration Alembic inicial.
-- [ ] **Entregável:** CI verde no primeiro push; endpoint de signup/login funcional retornando usuário.
+- [x] Pipeline de CI: lint + testes
+- [x] Cadastro/login com hash de senha — modelo `User`, Argon2/bcrypt, migration Alembic inicial.
+- [x] **Entregável:** CI verde no primeiro push; endpoint de signup/login funcional retornando usuário.
 
 
 ---
