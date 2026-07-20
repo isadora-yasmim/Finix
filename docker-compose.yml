@@ -27,7 +27,7 @@ services:
       # Sobrescreve o host do banco para o nome do serviço dentro da rede do compose.
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-finix}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-finix}
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ./backend:/app
     depends_on:
@@ -39,9 +39,9 @@ services:
     container_name: finix-frontend
     restart: unless-stopped
     environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8001}
     ports:
-      - "5173:5173"
+      - "5174:5173"
     volumes:
       - ./frontend:/app
       # Volume anônimo para o node_modules não ser sobrescrito pelo bind mount.

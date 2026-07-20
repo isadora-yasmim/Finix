@@ -22,7 +22,7 @@
 
 O nome nasce da junção de **Finance** + **Phoenix**: assim como a fênix renasce das próprias cinzas, o Finix existe para ajudar você a renascer financeiramente — transformando extratos bagunçados em clareza, e gastos descontrolados em oportunidades de crescimento.
 
-> 📄 A documentação completa de arquitetura, requisitos e roadmap está em [`PROJECT.md`](./PROJECT.md).
+> 📄 A documentação completa de arquitetura, requisitos e roadmap está em [`plano_projeto.md`](docs/plano_projeto.md).
 
 ---
 
