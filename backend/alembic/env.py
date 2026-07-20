@@ -1,8 +1,8 @@
 """Ambiente de migrations do Alembic.
 
 A URL do banco e a metadata vêm da própria aplicação, para manter uma única
-fonte de verdade. Os modelos serão importados aqui à medida que forem criados
-(Épico C em diante).
+fonte de verdade. Os modelos são importados aqui para que o autogenerate os
+enxergue.
 """
 
 from logging.config import fileConfig
@@ -12,9 +12,7 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 from app.core.config import settings
 from app.core.db import Base
-
-# Importe os modelos aqui conforme forem criados para que o autogenerate os enxergue.
-# Ex.: from app.models import user, transaction  # noqa: F401
+from app.models import user  # noqa: F401  (registra a tabela em Base.metadata)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
