@@ -17,6 +17,8 @@ dependencies = [
     "psycopg[binary]>=3.1",
     "alembic>=1.13",
     "argon2-cffi>=23.1",
+    "pyjwt>=2.8",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -53,3 +55,16 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+# slowapi não expõe tipos (py.typed) em algumas versões: seu decorator vira "untyped"
+# e o strict acusa. A checagem de decorator não-tipado não se aplica a estas rotas.
+[[tool.mypy.overrides]]
+module = "app.api.routes.auth"
+disallow_untyped_decorators = false
+
+# O handler de rate limit do slowapi exige um `type: ignore[arg-type]` quando a lib
+# vem tipada; quando vem sem tipos, esse ignore fica "não usado". Desligar o aviso
+# mantém o módulo verde independentemente da versão resolvida do slowapi/starlette.
+[[tool.mypy.overrides]]
+module = "app.main"
+warn_unused_ignores = false

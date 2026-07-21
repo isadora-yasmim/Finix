@@ -36,7 +36,8 @@ def create_access_token(subject: str) -> str:
         "exp": int(expire.timestamp()),
         "jti": uuid.uuid4().hex,
     }
-    return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm)
+    # str() garante o tipo de retorno mesmo se o pyjwt instalado tipar encode como Any.
+    return str(jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm))
 
 
 def decode_access_token(token: str) -> dict[str, Any] | None:
