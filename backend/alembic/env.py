@@ -1,18 +1,15 @@
-"""Ambiente de migrations do Alembic.
-
-A URL do banco e a metadata vêm da própria aplicação, para manter uma única
-fonte de verdade. Os modelos são importados aqui para que o autogenerate os
-enxergue.
-"""
+"""Ambiente de migrations do Alembic — usa a URL e os modelos da aplicação."""
 
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
+# Importa os modelos para que o autogenerate/metadata enxergue as tabelas.
+import app.models.refresh_token  # noqa: F401,E402
+import app.models.user  # noqa: F401,E402
 from alembic import context
 from app.core.config import settings
 from app.core.db import Base
-from app.models import user  # noqa: F401  (registra a tabela em Base.metadata)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
@@ -29,6 +26,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -41,7 +39,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+        )
         with context.begin_transaction():
             context.run_migrations()
 
