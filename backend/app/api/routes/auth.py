@@ -1,38 +1,42 @@
-"""Rotas de autenticação: cadastro e login.
+"""Rotas de autenticação: cadastro, login, refresh, logout e perfil.
 
-Nesta etapa (Dia 2) o login valida as credenciais e retorna o usuário.
-A emissão de tokens JWT entra no Dia 3.
+Fluxo de tokens (PROJECT.md §10):
+- ``signup`` cria o usuário e retorna a representação pública.
+- ``login`` valida credenciais, retorna o **access token** (JWT curto) no corpo e
+  grava o **refresh token** em cookie HttpOnly.
+- ``refresh`` lê o cookie, rotaciona o refresh e emite um novo access token.
+- ``logout`` revoga o refresh token e limpa o cookie.
+- ``me`` é protegida por JWT (exemplo de rota autenticada).
+
+As rotas sensíveis (signup/login/refresh) têm rate limiting por IP.
 """
 
-from typing import Annotated
+from fastapi import APIRouter, HTTPException, Request, Response, status
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-
-from app.core.db import get_db
-from app.repositories.user import UserRepository
+from app.api.cookies import clear_refresh_cookie, set_refresh_cookie
+from app.api.deps import AuthServiceDep, CurrentUser, UserServiceDep
+from app.core.config import settings
+from app.core.rate_limit import limiter
+from app.schemas.auth import TokenResponse
 from app.schemas.user import UserCreate, UserLogin, UserRead
-from app.services.user import (
-    EmailAlreadyRegisteredError,
-    InvalidCredentialsError,
-    UserService,
-)
+from app.services.auth import InvalidRefreshTokenError
+from app.services.user import EmailAlreadyRegisteredError, InvalidCredentialsError
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-SessionDep = Annotated[Session, Depends(get_db)]
-
-
-def get_user_service(db: SessionDep) -> UserService:
-    """Monta o serviço de usuário com a sessão do request."""
-    return UserService(UserRepository(db))
-
-
-ServiceDep = Annotated[UserService, Depends(get_user_service)]
+_INVALID_CREDENTIALS = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Credenciais inválidas.",
+)
+_INVALID_REFRESH = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Sessão inválida ou expirada. Faça login novamente.",
+)
 
 
 @router.post("/signup", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def signup(data: UserCreate, service: ServiceDep) -> UserRead:
+@limiter.limit(settings.rate_limit_auth)
+def signup(request: Request, data: UserCreate, service: UserServiceDep) -> UserRead:
     try:
         user = service.register(data)
     except EmailAlreadyRegisteredError:
@@ -43,13 +47,52 @@ def signup(data: UserCreate, service: ServiceDep) -> UserRead:
     return UserRead.model_validate(user)
 
 
-@router.post("/login", response_model=UserRead)
-def login(data: UserLogin, service: ServiceDep) -> UserRead:
+@router.post("/login", response_model=TokenResponse)
+@limiter.limit(settings.rate_limit_auth)
+def login(
+    request: Request,
+    response: Response,
+    data: UserLogin,
+    service: AuthServiceDep,
+) -> TokenResponse:
     try:
-        user = service.authenticate(data)
+        issued = service.login(data)
     except InvalidCredentialsError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Credenciais inválidas.",
-        ) from None
-    return UserRead.model_validate(user)
+        raise _INVALID_CREDENTIALS from None
+
+    set_refresh_cookie(response, issued.refresh_token)
+    return TokenResponse(
+        access_token=issued.access_token,
+        expires_in=issued.access_expires_in,
+    )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+@limiter.limit(settings.rate_limit_auth)
+def refresh(request: Request, response: Response, service: AuthServiceDep) -> TokenResponse:
+    refresh_token = request.cookies.get(settings.refresh_cookie_name)
+    try:
+        issued = service.refresh(refresh_token)
+    except InvalidRefreshTokenError:
+        clear_refresh_cookie(response)
+        raise _INVALID_REFRESH from None
+
+    set_refresh_cookie(response, issued.refresh_token)
+    return TokenResponse(
+        access_token=issued.access_token,
+        expires_in=issued.access_expires_in,
+    )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(request: Request, response: Response, service: AuthServiceDep) -> Response:
+    refresh_token = request.cookies.get(settings.refresh_cookie_name)
+    service.logout(refresh_token)
+    clear_refresh_cookie(response)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@router.get("/me", response_model=UserRead)
+def me(current_user: CurrentUser) -> UserRead:
+    return UserRead.model_validate(current_user)

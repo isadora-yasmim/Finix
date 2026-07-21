@@ -1,4 +1,4 @@
-"""Fixtures de teste: banco SQLite isolado por teste e client com override."""
+"""Fixtures de teste: banco SQLite isolado e TestClient com get_db sobrescrito."""
 
 from collections.abc import Generator
 
@@ -8,8 +8,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.models.refresh_token  # noqa: F401  (registra o modelo em Base.metadata)
 import app.models.user  # noqa: F401  (registra o modelo em Base.metadata)
 from app.core.db import Base, get_db
+from app.core.rate_limit import limiter
 from app.main import app
 
 
@@ -34,12 +36,19 @@ def db_session() -> Generator[Session, None, None]:
 
 @pytest.fixture()
 def client(db_session: Session) -> Generator[TestClient, None, None]:
-    """TestClient com a dependency get_db apontando para o SQLite de teste."""
+    """TestClient com a dependency get_db apontando para o SQLite de teste.
+
+    O rate limiting fica DESLIGADO por padrão para não interferir nos testes
+    funcionais; o teste de rate limit o reativa explicitamente.
+    """
 
     def override_get_db() -> Generator[Session, None, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    limiter.enabled = False
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+    limiter.reset()
+    limiter.enabled = True

@@ -18,8 +18,25 @@ class Settings(BaseSettings):
     # Banco de dados
     database_url: str = "postgresql+psycopg://finix:changeme@db:5432/finix"
 
-    # Segurança (placeholders — auth real vem no Épico B)
-    secret_key: str = "change-me-in-production"
+    # Segurança — TROQUE em produção (>= 32 bytes). Ex.: secrets.token_urlsafe(32)
+    secret_key: str = "change-me-in-production-please-use-a-long-random-secret"
+
+    # JWT (token de acesso assinado com HS256 sobre secret_key)
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 7
+
+    # Cookie do refresh token (HttpOnly + Secure + SameSite, PROJECT.md §10)
+    refresh_cookie_name: str = "finix_refresh"
+    refresh_cookie_path: str = "/auth"
+    # secure=False em dev (HTTP); ligue em produção (HTTPS) via .env.
+    cookie_secure: bool = False
+    cookie_samesite: str = "lax"
+
+    # Rate limiting (slowapi). Desligável em testes/ambientes específicos.
+    rate_limit_enabled: bool = True
+    rate_limit_auth: str = "10/minute"
+    rate_limit_upload: str = "20/minute"
 
     # CORS — origens separadas por vírgula
     backend_cors_origins: str = "http://localhost:5173"
