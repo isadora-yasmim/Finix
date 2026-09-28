@@ -1,0 +1,359 @@
+# ==============================================================================
+# Finix — Pipeline de CI/CD
+#
+#   Estágio 1  Verificação estática    lint, formatação, tipos, CodeQL, dependências
+#   Estágio 2  Verificação dinâmica    testes automatizados + cobertura
+#   Estágio 3  Build                   imagem Docker + teste de integração com Postgres
+#   Estágio 4  Deploy staging          ambiente "staging"    (automático)
+#   Estágio 5  Deploy production       ambiente "production" (aprovação manual)
+#
+# Pull requests rodam os estágios 1–3 (sem publicar nada). Um push na main roda
+# tudo: a MESMA imagem aprovada em staging é promovida para production.
+# ==============================================================================
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Menor privilégio: cada job pede só as permissões extras de que precisa.
+permissions:
+  contents: read
+
+# Um novo push no mesmo PR cancela a execução anterior. Na main cada execução é
+# independente; os jobs de deploy têm filas próprias por ambiente (mais abaixo),
+# então um deploy nunca é interrompido no meio.
+concurrency:
+  group: ci-cd-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # ESTÁGIO 1 — VERIFICAÇÃO ESTÁTICA (analisa o código sem executá-lo)
+  # ────────────────────────────────────────────────────────────────────────────
+  backend-static:
+    name: "Estática · Backend (Ruff, Black, Mypy, pip-audit)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]" pip-audit
+
+      - name: Ruff (lint)
+        run: ruff check . --output-format=github
+
+      - name: Black (formatação)
+        run: black --check .
+
+      - name: Mypy (tipos, modo strict)
+        run: mypy app
+
+      - name: pip-audit (vulnerabilidades conhecidas nas dependências)
+        run: pip-audit --skip-editable --progress-spinner off
+
+  frontend-static:
+    name: "Estática · Frontend (ESLint, TypeScript, npm audit)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependências (lockfile exato)
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: TypeScript (checagem de tipos)
+        run: npx tsc -b
+
+      - name: npm audit (dependências de produção)
+        run: npm audit --omit=dev --audit-level=high
+
+  codeql:
+    name: "Estática · CodeQL (${{ matrix.language }})"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # publica os alertas na aba Security do repositório
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  dependency-review:
+    name: "Estática · Revisão de dependências do PR"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # comenta o resumo no PR
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # ESTÁGIO 2 — VERIFICAÇÃO DINÂMICA (executa o código)
+  # ────────────────────────────────────────────────────────────────────────────
+  backend-tests:
+    name: "Dinâmica · Testes do backend (Pytest + cobertura)"
+    needs: backend-static
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+
+      - name: Pytest com cobertura
+        run: >
+          pytest
+          --cov=app --cov-report=term-missing --cov-report=xml
+          --junitxml=pytest-report.xml
+
+      - name: Resumo da cobertura no job
+        if: always()
+        run: |
+          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          rate = float(ET.parse("coverage.xml").getroot().get("line-rate")) * 100
+          print(f"### Cobertura de testes do backend: **{rate:.1f}%**")
+          EOF
+
+      - name: Publicar relatórios
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: relatorios-testes-backend
+          path: |
+            backend/coverage.xml
+            backend/pytest-report.xml
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # ESTÁGIO 3 — BUILD + TESTE DE INTEGRAÇÃO DA IMAGEM
+  # Builda a imagem de produção, sobe o container contra um Postgres real
+  # (aplicando as migrations) e roda o smoke test. Só na main a imagem é
+  # publicada no GitHub Container Registry (GHCR).
+  # ────────────────────────────────────────────────────────────────────────────
+  build:
+    name: "Build · Imagem Docker + teste de integração"
+    needs: [backend-tests, frontend-static, codeql]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # publicar a imagem no GHCR
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: finix
+          POSTGRES_PASSWORD: finix
+          POSTGRES_DB: finix
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U finix -d finix"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Definir nome e tag da imagem
+        id: meta
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/finix"
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "image=${repo}:sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build da imagem de produção
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: ${{ steps.meta.outputs.image }}
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Migrations no Postgres real (upgrade → downgrade, testa reversibilidade)
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL=postgresql://finix:finix@localhost:5432/finix \
+            "${{ steps.meta.outputs.image }}" \
+            sh -c "alembic upgrade head && alembic downgrade base"
+
+      - name: Subir o container (migrations + API + frontend)
+        run: |
+          docker run -d --name finix --network host \
+            -e ENVIRONMENT=ci \
+            -e DATABASE_URL=postgresql://finix:finix@localhost:5432/finix \
+            -e SECRET_KEY=ci-only-secret-key-with-at-least-32-bytes \
+            "${{ steps.meta.outputs.image }}"
+
+      - name: Smoke test no container
+        run: bash .github/scripts/smoke-test.sh http://localhost:8000 "${GITHUB_SHA}" 90
+
+      - name: Logs do container (se falhar)
+        if: failure()
+        run: docker logs finix
+
+      - name: Login no GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publicar imagem no GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: docker push "${{ steps.meta.outputs.image }}"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # ESTÁGIO 4 — DEPLOY EM STAGING (ambiente de homologação)
+  # Só na main e quando a variável de repositório DEPLOY_ENABLED=true
+  # (ver docs/deploy.md). Secrets e URL vêm do GitHub Environment "staging".
+  # ────────────────────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: "Deploy · Staging"
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.APP_URL }}
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Deploy no Render (staging)
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: bash .github/scripts/deploy-render.sh "${{ needs.build.outputs.image }}"
+
+      - name: Smoke test em staging
+        run: bash .github/scripts/smoke-test.sh "${{ vars.APP_URL }}" "${GITHUB_SHA}" 600
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # ESTÁGIO 5 — DEPLOY EM PRODUCTION
+  # O ambiente "production" exige aprovação manual (Required reviewers).
+  # Promove a MESMA imagem validada em staging. Se o smoke test falhar,
+  # faz rollback automático para a última imagem boa (tag "production").
+  # ────────────────────────────────────────────────────────────────────────────
+  deploy-production:
+    name: "Deploy · Production"
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # mover a tag "production" no GHCR
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Deploy no Render (production)
+        id: deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: bash .github/scripts/deploy-render.sh "${{ needs.build.outputs.image }}"
+
+      - name: Smoke test em production
+        run: bash .github/scripts/smoke-test.sh "${{ vars.APP_URL }}" "${GITHUB_SHA}" 600
+
+      - name: Login no GHCR
+        if: always() && steps.deploy.outcome == 'success'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Marcar imagem como a última boa em produção
+        if: success()
+        run: |
+          image="${{ needs.build.outputs.image }}"
+          docker buildx imagetools create --tag "${image%:*}:production" "${image}"
+
+      - name: Rollback para a última versão boa
+        if: failure() && steps.deploy.outcome == 'success'
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          image="${{ needs.build.outputs.image }}"
+          previous="${image%:*}:production"
+          if docker buildx imagetools inspect "${previous}" > /dev/null 2>&1; then
+            echo "::warning::Smoke test falhou — voltando production para ${previous}"
+            bash .github/scripts/deploy-render.sh "${previous}"
+          else
+            echo "::warning::Smoke test falhou e ainda não há versão anterior para rollback."
+          fi
+
+      - name: Resumo do deploy
+        if: success()
+        run: |
+          {
+            echo "### 🚀 Finix em produção"
+            echo "- Commit: \`${GITHUB_SHA:0:7}\`"
+            echo "- Imagem: \`${{ needs.build.outputs.image }}\`"
+            echo "- URL: ${{ vars.APP_URL }}"
+          } >> "$GITHUB_STEP_SUMMARY"
