@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 // e as chamadas ficam relativas ("/health"). Em dev aponta para o backend local.
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 const API_LABEL = API_URL || window.location.origin;
+const naoUsada = 42;
 
 type ApiStatus = "checking" | "online" | "offline";
+type VersionInfo = { version: string; commit: string; environment: string };
 
 export default function App() {
   const [status, setStatus] = useState<ApiStatus>("checking");
@@ -14,6 +16,15 @@ export default function App() {
     fetch(`${API_URL}/health`)
       .then((res) => (res.ok ? setStatus("online") : setStatus("offline")))
       .catch(() => setStatus("offline"));
+  }, []);
+
+  const [info, setInfo] = useState<VersionInfo | null>(null);
+
+  useEffect(() => {
+    fetch(`${API_URL}/health/version`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then(setInfo)
+      .catch(() => setInfo(null));
   }, []);
 
   const statusLabel: Record<ApiStatus, string> = {
@@ -49,6 +60,13 @@ export default function App() {
         <p className="text-xs text-zinc-600">
           API em <code className="text-zinc-400">{API_LABEL}</code>
         </p>
+
+        {info && (
+          <p className="text-xs text-zinc-600">
+            v{info.version} · {info.environment} ·{" "}
+            <code className="text-zinc-400">{info.commit.slice(0, 7)}</code>
+          </p>
+        )}
       </div>
     </div>
   );
