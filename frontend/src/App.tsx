@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 // e as chamadas ficam relativas ("/health"). Em dev aponta para o backend local.
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 const API_LABEL = API_URL || window.location.origin;
-const naoUsada = 42;
 
 type ApiStatus = "checking" | "online" | "offline";
 type VersionInfo = { version: string; commit: string; environment: string };
