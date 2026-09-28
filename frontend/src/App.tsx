@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 
+// Em produção o frontend é servido pela própria API (mesma origem): VITE_API_URL=""
+// e as chamadas ficam relativas ("/health"). Em dev aponta para o backend local.
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const API_LABEL = API_URL || window.location.origin;
 
 type ApiStatus = "checking" | "online" | "offline";
 
@@ -44,7 +47,7 @@ export default function App() {
         </div>
 
         <p className="text-xs text-zinc-600">
-          API em <code className="text-zinc-400">{API_URL}</code>
+          API em <code className="text-zinc-400">{API_LABEL}</code>
         </p>
       </div>
     </div>

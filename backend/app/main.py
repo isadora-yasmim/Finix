@@ -1,7 +1,10 @@
 """Ponto de entrada da API do Finix."""
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -33,11 +36,28 @@ app.include_router(health_router)
 app.include_router(auth_router)
 
 
-@app.get("/", tags=["root"])
-def root() -> dict[str, str]:
+def api_info() -> dict[str, str]:
     return {
         "name": settings.project_name,
         "version": settings.version,
         "status": "ok",
         "docs": "/docs",
     }
+
+
+def configure_frontend(application: FastAPI, static_dir: str) -> None:
+    """Em produção a mesma imagem serve a API e o build do frontend (mesma origem).
+
+    Com ``static_dir`` vazio ou inexistente (desenvolvimento/testes), a raiz "/"
+    devolve as informações da API; caso contrário, devolve a SPA. O mount entra por
+    último, então as rotas da API (/health, /auth, /docs...) continuam tendo prioridade.
+    """
+    directory = Path(static_dir) if static_dir else None
+    if directory is not None and directory.is_dir():
+        application.add_api_route("/api", api_info, methods=["GET"], tags=["root"])
+        application.mount("/", StaticFiles(directory=directory, html=True), name="frontend")
+    else:
+        application.add_api_route("/", api_info, methods=["GET"], tags=["root"])
+
+
+configure_frontend(app, settings.static_dir)
