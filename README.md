@@ -10,6 +10,7 @@
 [![React](https://img.shields.io/badge/React-TypeScript-61DAFB?logo=react&logoColor=white)]()
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-336791?logo=postgresql&logoColor=white)]()
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)]()
+[![CI/CD](https://github.com/isadora-yasmim/Finix/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/isadora-yasmim/Finix/actions/workflows/ci-cd.yml)
 [![Licença](https://img.shields.io/badge/licença-MIT-lightgrey)]()
 
 </div>
@@ -43,7 +44,7 @@ O nome nasce da junção de **Finance** + **Phoenix**: assim como a fênix renas
 | **Backend** | Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.0, Alembic |
 | **Banco** | PostgreSQL 16 |
 | **Frontend** | React + TypeScript, Vite, Tailwind CSS |
-| **Infra** | Docker Compose, GitHub Actions (CI) |
+| **Infra** | Docker Compose, GitHub Actions (CI/CD), GHCR, Render, Neon |
 
 ---
 
@@ -82,6 +83,16 @@ Para parar: `Ctrl+C` e depois `docker compose down` (use `docker compose down -v
 
 ---
 
+## CI/CD e deploy
+
+Cada push e pull request passa pela pipeline [`ci-cd.yml`](.github/workflows/ci-cd.yml): análise estática
+(Ruff, Black, Mypy, ESLint, CodeQL, auditoria de dependências), testes com cobertura, build da imagem Docker
+testada contra um Postgres real e, na `main`, deploy em **staging** e depois em **production** (com aprovação).
+
+Detalhes, diagrama e o passo a passo de configuração estão em [`docs/deploy.md`](docs/deploy.md).
+
+---
+
 ## Desenvolvimento
 
 ### Backend (fora do Docker, opcional)
@@ -113,7 +124,8 @@ finix/
 ├── docker-compose.yml      # sobe backend + db + frontend
 ├── .env.example            # modelo de variáveis de ambiente
 ├── PROJECT.md              # documentação completa (arquitetura, backlog, roadmap)
-├── .github/workflows/ci.yml
+├── Dockerfile              # imagem de produção (API + frontend buildado)
+├── .github/workflows/ci-cd.yml
 │
 ├── backend/                # API FastAPI
 │   ├── app/

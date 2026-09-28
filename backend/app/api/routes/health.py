@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 from sqlalchemy import text
 
+from app.core.config import settings
 from app.core.db import engine
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -12,6 +13,16 @@ router = APIRouter(prefix="/health", tags=["health"])
 def health() -> dict[str, str]:
     """Liveness: a API está de pé."""
     return {"status": "ok"}
+
+
+@router.get("/version")
+def health_version() -> dict[str, str]:
+    """Qual build está no ar — usado pelo smoke test da pipeline após cada deploy."""
+    return {
+        "version": settings.version,
+        "commit": settings.git_sha,
+        "environment": settings.environment,
+    }
 
 
 @router.get("/db")
